@@ -13,7 +13,8 @@ from rich.markdown import Markdown
 
 from src.config import RAGConfig
 from src.generator import answer, double_answer, dedupe_generated_text
-from src.index_builder import build_index
+from src.index_builder import build_index, build_incremental_index
+from src.checkpoint import IndexCheckpoint
 from src.instrumentation.logging import get_logger
 from src.ranking.ranker import EnsembleRanker
 from src.preprocessing.chunking import DocumentChunker
@@ -42,6 +43,10 @@ def parse_args() -> argparse.Namespace:
     indexing_group.add_argument("--keep_tables", action="store_true")
     indexing_group.add_argument("--multiproc_indexing", action="store_true")
     indexing_group.add_argument("--embed_with_headings", action="store_true")
+    indexing_group.add_argument(
+        "--no_verify_index", action="store_true",
+        help="skip artifact hash verification after indexing"
+    )
     parser.add_argument(
         "--double_prompt",
         action="store_true",
@@ -65,14 +70,19 @@ def run_index_mode(args: argparse.Namespace, cfg: RAGConfig):
         print("ERROR: No markdown files found in data/.", file=sys.stderr)
         sys.exit(1)
 
-    build_index(
-        markdown_file=str(md_files[0]),
+    checkpoint = IndexCheckpoint(artifacts_dir / "checkpoint.json")
+    print("Checkpoint status:")
+    checkpoint.summary()
+
+    build_incremental_index(
+        md_files=[str(f) for f in md_files],
         chunker=chunker,
         chunk_config=cfg.chunk_config,
         embedding_model_path=cfg.embed_model,
         embedding_model_context_window=cfg.embedding_model_context_window,
         artifacts_dir=artifacts_dir,
         index_prefix=args.index_prefix,
+        checkpoint=checkpoint,
         use_multiprocessing=args.multiproc_indexing,
         use_headings=args.embed_with_headings,
     )
@@ -285,6 +295,9 @@ def run_chat_session(args: argparse.Namespace, cfg: RAGConfig):
     print("Initializing TokenSmith Chat...")
     try:
         artifacts_dir = cfg.get_artifacts_directory()
+        if not args.no_verify_index:
+            checkpoint = IndexCheckpoint(artifacts_dir / "checkpoint.json")
+            checkpoint.verify_artifacts(artifacts_dir)
         faiss_idx, bm25_idx, chunks, sources, meta = load_artifacts(artifacts_dir, args.index_prefix)
         print(f"Loaded {len(chunks)} chunks and {len(sources)} sources from artifacts.")
         retrievers = [FAISSRetriever(faiss_idx, cfg.embed_model), BM25Retriever(bm25_idx)]

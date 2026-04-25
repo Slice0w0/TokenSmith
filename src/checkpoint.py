@@ -23,10 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 
-# --------------------------------------------------------------------------- #
-# File hashing                                                                 #
-# --------------------------------------------------------------------------- #
-
+# File hashing                                                                 
 def hash_file(path: str) -> str:
     """Return the SHA-256 hex digest of a file's contents."""
     h = hashlib.sha256()
@@ -36,10 +33,7 @@ def hash_file(path: str) -> str:
     return h.hexdigest()
 
 
-# --------------------------------------------------------------------------- #
-# Checkpoint store                                                             #
-# --------------------------------------------------------------------------- #
-
+# Checkpoint store                                                             
 class IndexCheckpoint:
     """
     JSON-backed checkpoint that records which markdown files have been
@@ -53,10 +47,7 @@ class IndexCheckpoint:
         self.checkpoint_path = pathlib.Path(checkpoint_path)
         self._data: dict = self._load()
 
-    # ------------------------------------------------------------------ #
-    # Persistence                                                          #
-    # ------------------------------------------------------------------ #
-
+    # Persistence                                                         
     def _load(self) -> dict:
         if self.checkpoint_path.exists():
             with open(self.checkpoint_path, "r") as f:
@@ -68,10 +59,7 @@ class IndexCheckpoint:
         with open(self.checkpoint_path, "w") as f:
             json.dump(self._data, f, indent=2)
 
-    # ------------------------------------------------------------------ #
-    # Queries                                                              #
-    # ------------------------------------------------------------------ #
-
+    # Queries                                                             
     def get_record(self, file_path: str) -> Optional[dict]:
         """Return the stored record for *file_path*, or None if not found."""
         return self._data.get(file_path)
@@ -108,10 +96,7 @@ class IndexCheckpoint:
                 f"indexed_at={rec['indexed_at']}"
             )
 
-    # ------------------------------------------------------------------ #
-    # Mutations                                                            #
-    # ------------------------------------------------------------------ #
-
+    # Mutations                                                            
     def upsert(
         self,
         file_path: str,
@@ -126,6 +111,18 @@ class IndexCheckpoint:
             "num_chunks":   num_chunks,
             "artifact_key": artifact_key,
         }
+
+    def config_matches(self, embed_model: str, n_ctx: int) -> bool:
+        """Return True if the stored embedding config matches the incoming one.
+        Returns True on first run (no stored config) so we don't force a spurious rebuild."""
+        stored = self._data.get("_config")
+        if not stored:
+            return True
+        return stored.get("embed_model") == embed_model and stored.get("n_ctx") == n_ctx
+
+    def set_config(self, embed_model: str, n_ctx: int) -> None:
+        """Persist the embedding config used for this index build under _config."""
+        self._data["_config"] = {"embed_model": embed_model, "n_ctx": n_ctx}
 
     def set_artifact_hashes(self, artifacts_dir: pathlib.Path, filenames: list) -> None:
         """Compute and store SHA-256 hashes of combined artifact files under _artifacts.
@@ -142,7 +139,7 @@ class IndexCheckpoint:
         Raises ValueError listing every mismatch or missing file."""
         stored = self._data.get("_artifacts", {})
         if not stored:
-            print("No artifact hashes in checkpoint — skipping verification.")
+            print("No artifact hashes in checkpoint: rebuilding whole index")
             return
         mismatches = []
         for fname, expected in stored.items():

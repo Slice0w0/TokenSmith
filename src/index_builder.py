@@ -211,6 +211,7 @@ def _process_file_to_artifacts(
     chunker: DocumentChunker,
     chunk_config: ChunkConfig,
     embedding_model_path: str,
+    embedding_model_context_window: int,
     use_multiprocessing: bool = False,
     use_headings: bool = False,
 ) -> Tuple[List[str], List[str], List[Dict], "np.ndarray", dict]:
@@ -329,8 +330,8 @@ def _process_file_to_artifacts(
         total_chunks += len(sub_chunks)
 
     # Step 2: Create embeddings for FAISS index
-    print(f"Embedding {len(all_chunks):,} chunks with {pathlib.Path(embedding_model_path).stem} ...")
-    embedder = SentenceTransformer(embedding_model_path)
+    print(f"Embedding {len(all_chunks):,} chunks with {pathlib.Path(embedding_model_path).stem} (n_ctx={embedding_model_context_window})...")
+    embedder = SentenceTransformer(embedding_model_path, n_ctx=embedding_model_context_window)
 
     if use_multiprocessing:
         print("Starting multi-process pool for embeddings...")
@@ -369,19 +370,20 @@ def build_incremental_index(
     chunker: DocumentChunker,
     chunk_config: ChunkConfig,
     embedding_model_path: str,
+    embedding_model_context_window: int,
     artifacts_dir: os.PathLike,
     index_prefix: str,
     checkpoint,           # IndexCheckpoint from checkpoint.py
     use_multiprocessing: bool = False,
     use_headings: bool = False,
+    verify_artifacts: bool = True,
 ) -> None:
     """
     Incrementally build (or update) FAISS + BM25 indexes across multiple
     markdown files, skipping any file whose content has not changed since the
     last run (detected via SHA-256 hash stored in a JSON checkpoint).
 
-    Strategy
-    --------
+    Strategy:
     1. Hash every candidate file and compare against checkpoint.
     2. For each new/changed file: embed and save per-file artifacts under
        artifacts_dir/per_file/<artifact_key>_*.pkl
@@ -389,8 +391,7 @@ def build_incremental_index(
     4. Load ALL per-file artifacts (old + new), merge in memory.
     5. Rebuild the combined FAISS, BM25, and metadata artifacts.
 
-    Per-file artifacts stored under per_file/
-    ------------------------------------------
+    Per-file artifacts stored under per_file/:
         <key>_chunks.pkl
         <key>_sources.pkl
         <key>_meta.pkl
@@ -402,6 +403,21 @@ def build_incremental_index(
     artifacts_dir = pathlib.Path(artifacts_dir)
     per_file_dir = artifacts_dir / "per_file"
     per_file_dir.mkdir(exist_ok=True)
+
+    # If the embedding model or context window changed, all cached embeddings are
+    # stale — force every file to be reprocessed before comparing hashes.
+    if not checkpoint.config_matches(embedding_model_path, embedding_model_context_window):
+        print("Embedding config changed — invalidating all cached per-file artifacts.")
+        checkpoint._data = {}   # wipe in-memory state; disk is overwritten at step 6
+    elif verify_artifacts:
+        # Verify previously-built combined artifacts before any pkl is loaded.
+        # On mismatch, wipe checkpoint so all files are treated as new.
+        try:
+            checkpoint.verify_artifacts(artifacts_dir)
+        except ValueError as e:
+            print(f"WARNING: artifact verification failed: {e}")
+            print("Rebuilding full index from scratch...")
+            checkpoint._data = {}
 
     # Step 1: identify new / changed files
     file_hashes = {f: hash_file(f) for f in md_files}
@@ -431,6 +447,7 @@ def build_incremental_index(
             chunker=chunker,
             chunk_config=chunk_config,
             embedding_model_path=embedding_model_path,
+            embedding_model_context_window=embedding_model_context_window,
             use_multiprocessing=use_multiprocessing,
             use_headings=use_headings,
         )
@@ -540,6 +557,7 @@ def build_incremental_index(
         f"{index_prefix}_page_to_chunk_map.json",
     ]
     checkpoint.set_artifact_hashes(artifacts_dir, artifact_filenames)
+    checkpoint.set_config(embedding_model_path, embedding_model_context_window)
     checkpoint.save()
     print(f"Checkpoint updated: {checkpoint.checkpoint_path}")
 

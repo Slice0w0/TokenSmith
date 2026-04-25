@@ -70,6 +70,7 @@ def run_index_mode(args: argparse.Namespace, cfg: RAGConfig):
         print("ERROR: No markdown files found in data/.", file=sys.stderr)
         sys.exit(1)
 
+
     checkpoint = IndexCheckpoint(artifacts_dir / "checkpoint.json")
     print("Checkpoint status:")
     checkpoint.summary()
@@ -85,6 +86,7 @@ def run_index_mode(args: argparse.Namespace, cfg: RAGConfig):
         checkpoint=checkpoint,
         use_multiprocessing=args.multiproc_indexing,
         use_headings=args.embed_with_headings,
+        verify_artifacts=not args.no_verify_index,
     )
 def use_indexed_chunks(question: str, chunks: list) -> list:
     # Logic for keyword matching from textbook index

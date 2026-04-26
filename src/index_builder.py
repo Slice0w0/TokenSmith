@@ -462,10 +462,10 @@ def build_incremental_index(
             pickle.dump(embeddings, f)
 
         checkpoint.upsert(md_file, fhash, len(chunks), artifact_key)
+        # Save after each file so a crash only re-processes unfinished files next run.
+        # _artifacts and _config are not set yet — those are written in step 6.
+        checkpoint.save()
         print(f"  Saved per-file artifacts for {pathlib.Path(md_file).name}  (key={artifact_key})")
-
-    # Step 3: checkpoint.save() is deferred to after artifact rebuild (step 5)
-    # so the checkpoint is only persisted when everything succeeds.
 
     # Step 4: load ALL per-file artifacts and merge
     all_chunks:  List[str]  = []
